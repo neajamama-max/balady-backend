@@ -43,6 +43,8 @@ db.exec(`
     town TEXT NOT NULL,
     sector TEXT NOT NULL,
     phone TEXT NOT NULL,
+    email TEXT,
+    delete_token TEXT,
     status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | hidden
     posted_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -62,12 +64,28 @@ db.exec(`
   );
 `);
 
+// ترقية آمنة لقاعدة بيانات موجودة من قبل (لو الأعمدة الجديدة مش موجودة، ضيفها بدون ما تمسح البيانات)
+function addColumnIfMissing(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  const exists = cols.some(c => c.name === column);
+  if (!exists) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    console.log(`تمت إضافة العمود ${column} لجدول ${table}`);
+  }
+}
+addColumnIfMissing('posts', 'email', 'TEXT');
+addColumnIfMissing('posts', 'delete_token', 'TEXT');
+
 // إعدادات افتراضية أول ما تشتغل قاعدة البيانات لأول مرة
 const DEFAULT_CONFIG = {
   siteName: 'بلدي',
   tagline: 'بدور عمال؟ بدك شغل؟ هون بتلاقوا بعض',
   ticker: [],
-  bgColor: '#14120F',
+  colors: {
+    bg: '#14120F', surface: '#1E1B17', surface2: '#262119', line: '#3A332A',
+    ink: '#F2ECE0', inkDim: '#B7AE9C', rust: '#C1502E', rustBright: '#DE6A44',
+    olive: '#8A9A5B', sand: '#D9C68F'
+  },
   towns: {
     'الجليل': [
       {ar:'الناصرة', he:'נצרת'}, {ar:'سخنين', he:"סח'נין"}, {ar:'شفاعمرو', he:'שפרעם'},
@@ -163,18 +181,28 @@ function attachImages(post) {
   return { ...post, images: rows.map(r => r.image_path) };
 }
 
+// توليد رمز حذف عشوائي قصير وسهل الكتابة (6 خانات، أحرف كبيرة وأرقام)
+function generateDeleteToken() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // بدون أحرف/أرقام متشابهة (0/O, 1/I)
+  let token = '';
+  for (let i = 0; i < 6; i++) token += chars[Math.floor(Math.random() * chars.length)];
+  return token;
+}
+
 // نشر ستاتوس جديد (بيصير status = pending تلقائياً، وبينستنى موافقة الإدارة)
 app.post('/api/posts', upload.array('images', 4), (req, res) => {
-  const { name, type, content, town, sector, phone } = req.body;
+  const { name, type, content, town, sector, phone, email } = req.body;
   if (!name || !type || !content || !town || !sector || !phone) {
     return res.status(400).json({ error: 'الرجاء تعبئة كل الحقول المطلوبة' });
   }
 
+  const deleteToken = generateDeleteToken();
+
   const stmt = db.prepare(`
-    INSERT INTO posts (name, type, content, town, sector, phone, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'pending')
+    INSERT INTO posts (name, type, content, town, sector, phone, email, delete_token, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
   `);
-  const result = stmt.run(name, type, content, town, sector, phone);
+  const result = stmt.run(name, type, content, town, sector, phone, email || null, deleteToken);
   const postId = result.lastInsertRowid;
 
   if (req.files && req.files.length) {
@@ -182,7 +210,33 @@ app.post('/api/posts', upload.array('images', 4), (req, res) => {
     req.files.forEach(file => insertImg.run(postId, `/uploads/${file.filename}`));
   }
 
-  res.status(201).json({ message: 'تم إرسال الستاتوس، وهو الآن قيد المراجعة', id: postId });
+  res.status(201).json({
+    message: 'تم إرسال الستاتوس، وهو الآن قيد المراجعة',
+    id: postId,
+    deleteToken // بيرجع مرة وحدة بس هون — احتفظي فيه، بيلزمك لاحقاً تحذفي منشورك بنفسك
+  });
+});
+
+// حذف منشور من طرف صاحبه (بدون تسجيل دخول إدارة) — لازم يطابق رقم الهاتف ورمز الحذف معاً
+app.delete('/api/posts/self', (req, res) => {
+  const { phone, deleteToken } = req.body;
+  if (!phone || !deleteToken) {
+    return res.status(400).json({ error: 'الرجاء إدخال رقم الهاتف ورمز الحذف' });
+  }
+
+  const post = db.prepare(`SELECT id FROM posts WHERE phone = ? AND delete_token = ?`).get(phone, deleteToken.toUpperCase());
+  if (!post) {
+    return res.status(404).json({ error: 'ما لقينا منشور مطابق. تأكدي من رقم الهاتف ورمز الحذف.' });
+  }
+
+  const images = db.prepare('SELECT image_path FROM post_images WHERE post_id = ?').all(post.id);
+  images.forEach(img => {
+    const filePath = path.join(__dirname, img.image_path.replace(/^\//, ''));
+    fs.unlink(filePath, () => {});
+  });
+  db.prepare(`DELETE FROM posts WHERE id = ?`).run(post.id);
+
+  res.json({ message: 'تم حذف المنشور بنجاح' });
 });
 
 // الفييد العام — بس المنشورات الموافق عليها (approved)
