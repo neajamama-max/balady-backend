@@ -86,6 +86,14 @@ db.exec(`
     reason TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- زوار فريدين (Unique Visitors) — visitor_id عشوائي مجهول محفوظ بمتصفح الزائر،
+  -- والمفتاح المركّب (visitor_id + visit_date) بيضمن نفس الزائر ينحسب مرة وحدة بس كل يوم
+  CREATE TABLE IF NOT EXISTS visits (
+    visitor_id TEXT NOT NULL,
+    visit_date TEXT NOT NULL,
+    PRIMARY KEY (visitor_id, visit_date)
+  );
 `);
 
 // ترقية آمنة لقاعدة بيانات موجودة من قبل (لو الأعمدة الجديدة مش موجودة، ضيفها بدون ما تمسح البيانات)
@@ -527,6 +535,34 @@ function deleteExpiredPosts() {
 // نفّذيها مرة عند تشغيل السيرفر، وبعدين كل 24 ساعة
 deleteExpiredPosts();
 setInterval(deleteExpiredPosts, 24 * 60 * 60 * 1000);
+
+// ============================================================
+// تسجيل زوار فريدين (بدون أي معلومة شخصية — بس رقم عشوائي مجهول)
+// ============================================================
+app.post('/api/track-visit', rateLimit(20, 10), (req, res) => {
+  const { visitorId } = req.body;
+  if (!visitorId || typeof visitorId !== 'string' || visitorId.length > 100) {
+    return res.status(400).json({ error: 'بيانات غير صالحة' });
+  }
+  try{
+    db.prepare('INSERT OR IGNORE INTO visits (visitor_id, visit_date) VALUES (?, date(\'now\'))').run(visitorId);
+  } catch(e){ /* تجاهل أي خطأ، هاد إحصائيات بس مش شي حرج */ }
+  res.status(204).end();
+});
+
+// إحصائيات الزوار (للإدارة فقط)
+app.get('/api/admin/visitor-stats', requireAdmin, (req, res) => {
+  const today = db.prepare(`SELECT COUNT(*) as c FROM visits WHERE visit_date = date('now')`).get().c;
+  const last7 = db.prepare(`SELECT COUNT(DISTINCT visitor_id) as c FROM visits WHERE visit_date >= date('now', '-6 days')`).get().c;
+  const last30 = db.prepare(`SELECT COUNT(DISTINCT visitor_id) as c FROM visits WHERE visit_date >= date('now', '-29 days')`).get().c;
+  const allTime = db.prepare(`SELECT COUNT(DISTINCT visitor_id) as c FROM visits`).get().c;
+  const daily = db.prepare(`
+    SELECT visit_date, COUNT(*) as count FROM visits
+    WHERE visit_date >= date('now', '-13 days')
+    GROUP BY visit_date ORDER BY visit_date ASC
+  `).all();
+  res.json({ today, last7, last30, allTime, daily });
+});
 
 app.listen(PORT, () => {
   console.log(`بلدي backend شغال على http://localhost:${PORT}`);
