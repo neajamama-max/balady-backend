@@ -143,6 +143,29 @@ const upload = multer({
   }
 });
 
+// رفع أكبر مخصص لصورة البانر (صورة واحدة كبيرة، مش أربع صور صغار)
+const bannerUpload = multer({
+  storage,
+  limits: { fileSize: 12 * 1024 * 1024 }, // 12MB — كافية لصور مصممة عالية الجودة
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith('image/')) return cb(new Error('يجب أن يكون الملف صورة'));
+    cb(null, true);
+  }
+});
+
+// يلتقط أي خطأ من Multer (حجم كبير، نوع ملف غلط...) ويرجعه برسالة JSON واضحة بدل ما يفشل بصمت
+function handleUploadErrors(err, req, res, next) {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'حجم الصورة كبير أكتر من المسموح. قلّلي حجمها وحاولي مرة ثانية.' });
+    }
+    return res.status(400).json({ error: 'صار خطأ برفع الملف: ' + err.message });
+  } else if (err) {
+    return res.status(400).json({ error: err.message || 'صار خطأ برفع الملف' });
+  }
+  next();
+}
+
 app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(uploadDir));
@@ -195,7 +218,7 @@ function generateDeleteToken() {
 }
 
 // نشر ستاتوس جديد (بيصير status = pending تلقائياً، وبينستنى موافقة الإدارة)
-app.post('/api/posts', upload.array('images', 4), (req, res) => {
+app.post('/api/posts', upload.array('images', 4), handleUploadErrors, (req, res) => {
   const { name, type, content, town, sector, phone, email } = req.body;
   if (!name || !type || !content || !town || !sector || !phone) {
     return res.status(400).json({ error: 'الرجاء تعبئة كل الحقول المطلوبة' });
@@ -308,7 +331,7 @@ app.put('/api/admin/config', requireAdmin, (req, res) => {
 });
 
 // رفع صورة بانر مخصصة (يصممها المستخدم بنفسه) — بتحل محل بانر النص/التدرج تلقائياً
-app.post('/api/admin/banner-image', requireAdmin, upload.single('image'), (req, res) => {
+app.post('/api/admin/banner-image', requireAdmin, bannerUpload.single('image'), handleUploadErrors, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'الرجاء اختيار صورة' });
 
   const current = db.prepare('SELECT data FROM site_config WHERE id = 1').get();
