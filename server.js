@@ -27,7 +27,10 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_BEFORE_DEPLOY';
 
 // ---------- إعداد قاعدة البيانات ----------
-const db = new Database(path.join(__dirname, 'data.db'));
+// مجلد تخزين البيانات — لازم يكون مسار "القرص الدائم" (Persistent Disk) بعد ربطه على Render،
+// وإلا رح تنمسح البيانات (قاعدة البيانات + الصور) مع أي تحديث أو إعادة تشغيل للسيرفر!
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const db = new Database(path.join(DATA_DIR, 'data.db'));
 db.exec(`
   CREATE TABLE IF NOT EXISTS admins (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,9 +85,9 @@ const DEFAULT_CONFIG = {
   tagline: 'بدور عمال؟ بدك شغل؟ هون بتلاقوا بعض',
   ticker: [],
   colors: {
-    bg: '#14120F', surface: '#1E1B17', surface2: '#262119', line: '#3A332A',
-    ink: '#F2ECE0', inkDim: '#B7AE9C', rust: '#C1502E', rustBright: '#DE6A44',
-    olive: '#8A9A5B', sand: '#D9C68F'
+    bg: '#F0F2F5', surface: '#FFFFFF', surface2: '#E9EBEE', line: '#DADDE1',
+    ink: '#1C1E21', inkDim: '#65676B', rust: '#C1502E', rustBright: '#DE6A44',
+    olive: '#3C9D5B', sand: '#B26B00'
   },
   towns: {
     'الجليل': [
@@ -123,7 +126,7 @@ if (!existingConfig) {
 }
 
 // ---------- رفع الصور ----------
-const uploadDir = path.join(__dirname, 'uploads');
+const uploadDir = path.join(DATA_DIR, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -231,7 +234,7 @@ app.delete('/api/posts/self', (req, res) => {
 
   const images = db.prepare('SELECT image_path FROM post_images WHERE post_id = ?').all(post.id);
   images.forEach(img => {
-    const filePath = path.join(__dirname, img.image_path.replace(/^\//, ''));
+    const filePath = path.join(DATA_DIR, img.image_path.replace(/^\//, ''));
     fs.unlink(filePath, () => {});
   });
   db.prepare(`DELETE FROM posts WHERE id = ?`).run(post.id);
@@ -278,7 +281,7 @@ app.delete('/api/admin/posts/:id', requireAdmin, (req, res) => {
   // حذف الصور الفعلية من القرص قبل حذف السجل
   const images = db.prepare('SELECT image_path FROM post_images WHERE post_id = ?').all(req.params.id);
   images.forEach(img => {
-    const filePath = path.join(__dirname, img.image_path.replace(/^\//, ''));
+    const filePath = path.join(DATA_DIR, img.image_path.replace(/^\//, ''));
     fs.unlink(filePath, () => {});
   });
   const result = db.prepare(`DELETE FROM posts WHERE id = ?`).run(req.params.id);
