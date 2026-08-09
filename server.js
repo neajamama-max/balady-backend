@@ -75,6 +75,16 @@ db.exec(`
     message TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- تبليغات عن منشورات (مثلاً: نشر بيانات شخص تاني بدون إذنه) — بتحفظ نسخة من المنشور وقت التبليغ
+  -- حتى لو انحذف المنشور بعدين، الإدارة تضل تقدر تراجع التبليغ
+  CREATE TABLE IF NOT EXISTS post_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id INTEGER NOT NULL,
+    post_snapshot TEXT NOT NULL,
+    reason TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // ترقية آمنة لقاعدة بيانات موجودة من قبل (لو الأعمدة الجديدة مش موجودة، ضيفها بدون ما تمسح البيانات)
@@ -277,6 +287,18 @@ app.delete('/api/posts/self', (req, res) => {
   res.json({ message: 'تم حذف المنشور بنجاح' });
 });
 
+// إبلاغ عن منشور (مثلاً: نشر بيانات شخص تاني بدون إذنه، محتوى مسيء، إلخ) — متاح لأي زائر بدون تسجيل دخول
+app.post('/api/posts/:id/report', (req, res) => {
+  const { reason } = req.body;
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.id);
+  if (!post) return res.status(404).json({ error: 'المنشور غير موجود' });
+
+  db.prepare('INSERT INTO post_reports (post_id, post_snapshot, reason) VALUES (?, ?, ?)')
+    .run(post.id, JSON.stringify(post), reason || null);
+
+  res.status(201).json({ message: 'تم إرسال التبليغ، رح تراجعه الإدارة قريباً' });
+});
+
 // الفييد العام — بس المنشورات الموافق عليها (approved)
 app.get('/api/posts', (req, res) => {
   const rows = db.prepare(`SELECT * FROM posts WHERE status = 'approved' ORDER BY posted_at DESC`).all();
@@ -419,6 +441,19 @@ app.delete('/api/admin/contact-messages/:id', requireAdmin, (req, res) => {
   const result = db.prepare('DELETE FROM contact_messages WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'الرسالة غير موجودة' });
   res.json({ message: 'تم حذف الرسالة' });
+});
+
+// عرض تبليغات المنشورات (للإدارة فقط)
+app.get('/api/admin/reports', requireAdmin, (req, res) => {
+  const rows = db.prepare('SELECT * FROM post_reports ORDER BY created_at DESC').all();
+  res.json(rows.map(r => ({ ...r, post_snapshot: JSON.parse(r.post_snapshot) })));
+});
+
+// تجاهل/حذف تبليغ (بدون حذف المنشور نفسه)
+app.delete('/api/admin/reports/:id', requireAdmin, (req, res) => {
+  const result = db.prepare('DELETE FROM post_reports WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'التبليغ غير موجود' });
+  res.json({ message: 'تم تجاهل التبليغ' });
 });
 
 app.listen(PORT, () => {
