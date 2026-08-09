@@ -19,6 +19,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -64,6 +65,15 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS site_config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     data TEXT NOT NULL
+  );
+
+  -- رسائل صفحة "اتصل بنا" — بتتخزن هون كنسخة احتياطية حتى لو الإيميل ما وصل
+  CREATE TABLE IF NOT EXISTS contact_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
 
@@ -351,6 +361,64 @@ app.delete('/api/admin/banner-image', requireAdmin, (req, res) => {
   currentData.banner.image = null;
   db.prepare('UPDATE site_config SET data = ? WHERE id = 1').run(JSON.stringify(currentData));
   res.json({ message: 'تمت إزالة صورة البانر', config: currentData });
+});
+
+// ============================================================
+// نموذج "اتصل بنا" — بيبعت إيميل حقيقي على إيميلك الخاص + بيحفظ نسخة احتياطية
+// ============================================================
+
+// إعداد بريد Gmail لإرسال رسائل "اتصل بنا" — لازم تضيفي هالمتغيرات بيئة على Render:
+// GMAIL_USER = إيميل Gmail تبعك
+// GMAIL_APP_PASSWORD = "App Password" (مش كلمة مرور Gmail العادية — راجعي التعليمات)
+// CONTACT_EMAIL = الإيميل يلي بدك الرسائل توصله (ممكن يكون نفس GMAIL_USER)
+let mailTransporter = null;
+if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+  mailTransporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
+  });
+}
+
+app.post('/api/contact', async (req, res) => {
+  const { name, email, message } = req.body;
+  if (!name || !message) {
+    return res.status(400).json({ error: 'الرجاء كتابة الاسم والرسالة' });
+  }
+
+  // نحفظ نسخة بقاعدة البيانات دائماً (حتى لو الإيميل ما اشتغل، الرسالة ما بتضيع)
+  db.prepare('INSERT INTO contact_messages (name, email, message) VALUES (?, ?, ?)')
+    .run(name, email || null, message);
+
+  // نحاول نبعت إيميل حقيقي، لو الإعدادات موجودة
+  if (mailTransporter && process.env.CONTACT_EMAIL) {
+    try {
+      await mailTransporter.sendMail({
+        from: `"بلدي — رسالة جديدة" <${process.env.GMAIL_USER}>`,
+        to: process.env.CONTACT_EMAIL,
+        replyTo: email || undefined,
+        subject: `رسالة جديدة من ${name} — موقع بلدي`,
+        text: `الاسم: ${name}\nالإيميل: ${email || 'ما انكتب'}\n\nالرسالة:\n${message}`
+      });
+    } catch (e) {
+      console.error('فشل إرسال إيميل اتصل بنا:', e.message);
+      // ما بنرجع خطأ للمستخدم — الرسالة محفوظة أصلاً بقاعدة البيانات
+    }
+  }
+
+  res.status(201).json({ message: 'تم إرسال رسالتك بنجاح' });
+});
+
+// عرض رسائل "اتصل بنا" (للإدارة فقط)
+app.get('/api/admin/contact-messages', requireAdmin, (req, res) => {
+  const rows = db.prepare('SELECT * FROM contact_messages ORDER BY created_at DESC').all();
+  res.json(rows);
+});
+
+// حذف رسالة (للإدارة فقط)
+app.delete('/api/admin/contact-messages/:id', requireAdmin, (req, res) => {
+  const result = db.prepare('DELETE FROM contact_messages WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'الرسالة غير موجودة' });
+  res.json({ message: 'تم حذف الرسالة' });
 });
 
 app.listen(PORT, () => {
