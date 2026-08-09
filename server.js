@@ -22,6 +22,7 @@ const Database = require('better-sqlite3');
 const nodemailer = require('nodemailer');
 
 const app = express();
+app.set('trust proxy', 1); // ضروري حتى req.ip يعطي IP الزائر الحقيقي (Render خلف بروكسي)
 const PORT = process.env.PORT || 3000;
 
 // !!! غيّر هاد السر قبل النشر، وحطه بمتغير بيئة (Environment Variable) مش بالكود !!!
@@ -191,6 +192,51 @@ app.use(express.json({ limit: '5mb' }));
 app.use('/uploads', express.static(uploadDir));
 
 // ============================================================
+// حماية من السبام: حد أقصى للطلبات لكل IP + حقل "فخ" (Honeypot)
+// ============================================================
+
+// خزّان بسيط بالذاكرة يتتبع عدد الطلبات لكل IP بفترة زمنية معيّنة
+const rateLimitStore = new Map();
+
+function rateLimit(maxRequests, windowMinutes) {
+  const windowMs = windowMinutes * 60 * 1000;
+  return (req, res, next) => {
+    const ip = req.ip || 'unknown';
+    const key = `${req.path}:${ip}`;
+    const now = Date.now();
+    const entry = rateLimitStore.get(key);
+
+    if (!entry || now - entry.start > windowMs) {
+      rateLimitStore.set(key, { count: 1, start: now });
+      return next();
+    }
+    if (entry.count >= maxRequests) {
+      return res.status(429).json({ error: 'في محاولات كتير بوقت قصير. الرجاء الانتظار شوي والمحاولة مرة ثانية.' });
+    }
+    entry.count++;
+    next();
+  };
+}
+
+// تنظيف دوري للخزّان حتى ما يكبر بلا داعي (كل ساعة)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitStore.entries()) {
+    if (now - entry.start > 60 * 60 * 1000) rateLimitStore.delete(key);
+  }
+}, 60 * 60 * 1000);
+
+// حقل "فخ" مخفي بالفورم — إنسان حقيقي ما بيعبيه، بس بوتات التعبئة التلقائية غالباً بتعبيه.
+// إذا انعبى، منرجع نجاح وهمي (حتى ما يعرف البوت إنه انكشف) بدون ما نخزّن أي شي فعلياً.
+function checkHoneypot(req, res, next) {
+  const honeypotValue = req.body && req.body.website;
+  if (honeypotValue && honeypotValue.trim() !== '') {
+    return res.status(201).json({ message: 'تم بنجاح' }); // نجاح وهمي، ما بنخزن إشي
+  }
+  next();
+}
+
+// ============================================================
 // مصادقة الإدارة (Auth)
 // ============================================================
 
@@ -238,7 +284,7 @@ function generateDeleteToken() {
 }
 
 // نشر ستاتوس جديد (بيصير status = pending تلقائياً، وبينستنى موافقة الإدارة)
-app.post('/api/posts', upload.array('images', 4), handleUploadErrors, (req, res) => {
+app.post('/api/posts', rateLimit(5, 10), upload.array('images', 4), handleUploadErrors, checkHoneypot, (req, res) => {
   const { name, type, content, town, sector, phone, email } = req.body;
   if (!name || !type || !content || !town || !sector || !phone) {
     return res.status(400).json({ error: 'الرجاء تعبئة كل الحقول المطلوبة' });
@@ -266,7 +312,7 @@ app.post('/api/posts', upload.array('images', 4), handleUploadErrors, (req, res)
 });
 
 // حذف منشور من طرف صاحبه (بدون تسجيل دخول إدارة) — لازم يطابق رقم الهاتف ورمز الحذف معاً
-app.delete('/api/posts/self', (req, res) => {
+app.delete('/api/posts/self', rateLimit(10, 10), (req, res) => {
   const { phone, deleteToken } = req.body;
   if (!phone || !deleteToken) {
     return res.status(400).json({ error: 'الرجاء إدخال رقم الهاتف ورمز الحذف' });
@@ -288,7 +334,7 @@ app.delete('/api/posts/self', (req, res) => {
 });
 
 // إبلاغ عن منشور (مثلاً: نشر بيانات شخص تاني بدون إذنه، محتوى مسيء، إلخ) — متاح لأي زائر بدون تسجيل دخول
-app.post('/api/posts/:id/report', (req, res) => {
+app.post('/api/posts/:id/report', rateLimit(10, 10), checkHoneypot, (req, res) => {
   const { reason } = req.body;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.id);
   if (!post) return res.status(404).json({ error: 'المنشور غير موجود' });
@@ -401,7 +447,7 @@ if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
   });
 }
 
-app.post('/api/contact', async (req, res) => {
+app.post('/api/contact', rateLimit(5, 10), checkHoneypot, async (req, res) => {
   const { name, email, message } = req.body;
   if (!name || !message) {
     return res.status(400).json({ error: 'الرجاء كتابة الاسم والرسالة' });
