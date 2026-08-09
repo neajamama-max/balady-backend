@@ -18,7 +18,9 @@ if (password.length < 8) {
   process.exit(1);
 }
 
-const db = new Database(path.join(__dirname, 'data.db'));
+// مجلد تخزين البيانات — لازم يطابق نفس DATA_DIR يلي محطوط بمتغيرات البيئة على Render
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const db = new Database(path.join(DATA_DIR, 'data.db'));
 db.exec(`
   CREATE TABLE IF NOT EXISTS admins (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
