@@ -84,6 +84,8 @@ const DEFAULT_CONFIG = {
   siteName: 'بلدي',
   tagline: 'بدور عمال؟ بدك شغل؟ هون بتلاقوا بعض',
   ticker: [],
+  tickerBgColor: '#C1502E',
+  tickerTextColor: '#FFFFFF',
   colors: {
     bg: '#F0F2F5', surface: '#FFFFFF', surface2: '#E9EBEE', line: '#DADDE1',
     ink: '#1C1E21', inkDim: '#65676B', rust: '#C1502E', rustBright: '#DE6A44',
@@ -303,6 +305,29 @@ app.put('/api/admin/config', requireAdmin, (req, res) => {
   const updated = { ...currentData, ...req.body };
   db.prepare('UPDATE site_config SET data = ? WHERE id = 1').run(JSON.stringify(updated));
   res.json({ message: 'تم حفظ الإعدادات', config: updated });
+});
+
+// رفع صورة بانر مخصصة (يصممها المستخدم بنفسه) — بتحل محل بانر النص/التدرج تلقائياً
+app.post('/api/admin/banner-image', requireAdmin, upload.single('image'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'الرجاء اختيار صورة' });
+
+  const current = db.prepare('SELECT data FROM site_config WHERE id = 1').get();
+  const currentData = current ? JSON.parse(current.data) : DEFAULT_CONFIG;
+  currentData.banner = currentData.banner || {};
+  currentData.banner.image = `/uploads/${req.file.filename}`;
+  db.prepare('UPDATE site_config SET data = ? WHERE id = 1').run(JSON.stringify(currentData));
+
+  res.json({ message: 'تم رفع صورة البانر', imageUrl: currentData.banner.image, config: currentData });
+});
+
+// إزالة صورة البانر المخصصة (رجوع لبانر النص/التدرج)
+app.delete('/api/admin/banner-image', requireAdmin, (req, res) => {
+  const current = db.prepare('SELECT data FROM site_config WHERE id = 1').get();
+  const currentData = current ? JSON.parse(current.data) : DEFAULT_CONFIG;
+  currentData.banner = currentData.banner || {};
+  currentData.banner.image = null;
+  db.prepare('UPDATE site_config SET data = ? WHERE id = 1').run(JSON.stringify(currentData));
+  res.json({ message: 'تمت إزالة صورة البانر', config: currentData });
 });
 
 app.listen(PORT, () => {
