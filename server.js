@@ -502,6 +502,32 @@ app.delete('/api/admin/reports/:id', requireAdmin, (req, res) => {
   res.json({ message: 'تم تجاهل التبليغ' });
 });
 
+// ============================================================
+// حذف تلقائي للمنشورات القديمة (أكتر من 30 يوم من تاريخ النشر)
+// ============================================================
+function deleteExpiredPosts() {
+  const oldPosts = db.prepare(
+    `SELECT id FROM posts WHERE posted_at < datetime('now', '-30 days')`
+  ).all();
+
+  if (oldPosts.length === 0) return;
+
+  oldPosts.forEach(post => {
+    const images = db.prepare('SELECT image_path FROM post_images WHERE post_id = ?').all(post.id);
+    images.forEach(img => {
+      const filePath = path.join(DATA_DIR, img.image_path.replace(/^\//, ''));
+      fs.unlink(filePath, () => {});
+    });
+    db.prepare('DELETE FROM posts WHERE id = ?').run(post.id);
+  });
+
+  console.log(`تم حذف ${oldPosts.length} منشور تلقائياً (أقدم من 30 يوم)`);
+}
+
+// نفّذيها مرة عند تشغيل السيرفر، وبعدين كل 24 ساعة
+deleteExpiredPosts();
+setInterval(deleteExpiredPosts, 24 * 60 * 60 * 1000);
+
 app.listen(PORT, () => {
   console.log(`بلدي backend شغال على http://localhost:${PORT}`);
 });
