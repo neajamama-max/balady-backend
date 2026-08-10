@@ -112,7 +112,6 @@ addColumnIfMissing('posts', 'delete_token', 'TEXT');
 const DEFAULT_CONFIG = {
   siteName: 'بلدي',
   tagline: 'بدور عمال؟ بدك شغل؟ هون بتلاقوا بعض',
-  siteNameSize: 32,
   taglineSize: 13.5,
   ticker: [],
   tickerBgColor: '#C1502E',
@@ -419,6 +418,12 @@ app.put('/api/admin/config', requireAdmin, (req, res) => {
 });
 
 // رفع صورة بانر مخصصة (يصممها المستخدم بنفسه) — بتحل محل بانر النص/التدرج تلقائياً
+// رفع صورة عامة (مثلاً حتى تُستخدم جوا محرر النص الغني) — بترجع الرابط بس، ما بتخزنه بمكان معين
+app.post('/api/admin/upload-image', requireAdmin, bannerUpload.single('image'), handleUploadErrors, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'الرجاء اختيار صورة' });
+  res.json({ message: 'تم رفع الصورة', imageUrl: `/uploads/${req.file.filename}` });
+});
+
 app.post('/api/admin/banner-image', requireAdmin, bannerUpload.single('image'), handleUploadErrors, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'الرجاء اختيار صورة' });
 
