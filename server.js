@@ -112,6 +112,8 @@ addColumnIfMissing('posts', 'delete_token', 'TEXT');
 const DEFAULT_CONFIG = {
   siteName: 'بلدي',
   tagline: 'بدور عمال؟ بدك شغل؟ هون بتلاقوا بعض',
+  siteNameSize: 32,
+  taglineSize: 13.5,
   ticker: [],
   tickerBgColor: '#C1502E',
   tickerTextColor: '#FFFFFF',
