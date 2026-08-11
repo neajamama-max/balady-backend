@@ -107,6 +107,7 @@ function addColumnIfMissing(table, column, definition) {
 }
 addColumnIfMissing('posts', 'email', 'TEXT');
 addColumnIfMissing('posts', 'delete_token', 'TEXT');
+addColumnIfMissing('posts', 'extra_regions', 'TEXT');
 
 // إعدادات افتراضية أول ما تشتغل قاعدة البيانات لأول مرة
 const DEFAULT_CONFIG = {
@@ -132,6 +133,13 @@ const DEFAULT_CONFIG = {
     ],
     'الساحل': [{ar:'حيفا', he:'חיפה'}, {ar:'عكا', he:'עכו'}, {ar:'يافا', he:'יפו'}],
     'النقب': [{ar:'رهط', he:'רהט'}, {ar:'اللقية', he:'לקיה'}]
+  },
+  // اسم كل منطقة بالعبري (المفتاح لازم يطابق بالضبط اسم المنطقة العربي المستخدم كمفتاح بـ towns فوق)
+  regionNamesHe: {
+    'الجليل': 'הגליל',
+    'المثلث': 'המשולש',
+    'الساحل': 'החוף',
+    'النقب': 'הנגב'
   },
   sectors: [
     {ar:'بناء وتشطيبات', he:'בנייה וגימור'}, {ar:'سباكة وكهرباء', he:'אינסטלציה וחשמל'},
@@ -281,7 +289,11 @@ function requireAdmin(req, res, next) {
 
 function attachImages(post) {
   const rows = db.prepare('SELECT image_path FROM post_images WHERE post_id = ?').all(post.id);
-  return { ...post, images: rows.map(r => r.image_path) };
+  let extraRegions = [];
+  if (post.extra_regions) {
+    try { extraRegions = JSON.parse(post.extra_regions); } catch (e) { extraRegions = []; }
+  }
+  return { ...post, images: rows.map(r => r.image_path), extraRegions };
 }
 
 // توليد رمز حذف عشوائي قصير وسهل الكتابة (6 خانات، أحرف كبيرة وأرقام)
@@ -294,18 +306,27 @@ function generateDeleteToken() {
 
 // نشر ستاتوس جديد (بيصير status = pending تلقائياً، وبينستنى موافقة الإدارة)
 app.post('/api/posts', rateLimit(5, 10), upload.array('images', 4), handleUploadErrors, checkHoneypot, (req, res) => {
-  const { name, type, content, town, sector, phone, email } = req.body;
+  const { name, type, content, town, sector, phone, email, extraRegions } = req.body;
   if (!name || !type || !content || !town || !sector || !phone) {
     return res.status(400).json({ error: 'الرجاء تعبئة كل الحقول المطلوبة' });
   }
 
   const deleteToken = generateDeleteToken();
 
+  // المناطق الإضافية اختيارية — بتوصل كنص JSON (مصفوفة أسماء مناطق)، منتأكد إنها صيغة صحيحة قبل التخزين
+  let extraRegionsJson = null;
+  if (extraRegions) {
+    try {
+      const parsed = JSON.parse(extraRegions);
+      if (Array.isArray(parsed) && parsed.length) extraRegionsJson = JSON.stringify(parsed);
+    } catch (e) { /* تجاهل لو الصيغة غلط */ }
+  }
+
   const stmt = db.prepare(`
-    INSERT INTO posts (name, type, content, town, sector, phone, email, delete_token, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+    INSERT INTO posts (name, type, content, town, sector, phone, email, delete_token, extra_regions, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
   `);
-  const result = stmt.run(name, type, content, town, sector, phone, email || null, deleteToken);
+  const result = stmt.run(name, type, content, town, sector, phone, email || null, deleteToken, extraRegionsJson);
   const postId = result.lastInsertRowid;
 
   if (req.files && req.files.length) {
