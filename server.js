@@ -307,8 +307,8 @@ function generateDeleteToken() {
 // نشر ستاتوس جديد (بيصير status = pending تلقائياً، وبينستنى موافقة الإدارة)
 app.post('/api/posts', rateLimit(5, 10), upload.array('images', 4), handleUploadErrors, checkHoneypot, (req, res) => {
   const { name, type, content, town, sector, phone, email, extraRegions } = req.body;
-  if (!name || !type || !content || !town || !sector || !phone) {
-    return res.status(400).json({ error: 'الرجاء تعبئة كل الحقول المطلوبة' });
+  if (!name || !type || !content || !town || !sector || (!phone && !email)) {
+    return res.status(400).json({ error: 'الرجاء تعبئة كل الحقول المطلوبة (رقم هاتف أو إيميل ع الأقل)' });
   }
 
   const deleteToken = generateDeleteToken();
@@ -326,7 +326,7 @@ app.post('/api/posts', rateLimit(5, 10), upload.array('images', 4), handleUpload
     INSERT INTO posts (name, type, content, town, sector, phone, email, delete_token, extra_regions, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
   `);
-  const result = stmt.run(name, type, content, town, sector, phone, email || null, deleteToken, extraRegionsJson);
+  const result = stmt.run(name, type, content, town, sector, phone || null, email || null, deleteToken, extraRegionsJson);
   const postId = result.lastInsertRowid;
 
   if (req.files && req.files.length) {
