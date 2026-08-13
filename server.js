@@ -168,27 +168,37 @@ if (!existingConfig) {
 // ---------- رفع الصور ----------
 const uploadDir = path.join(DATA_DIR, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+// خرائط أنواع الصور المسموحة فقط -> الامتداد الآمن يلي رح نخزن الملف فيه
+// (منتجاهل امتداد الملف الأصلي كلياً، ومنفرض امتداد آمن حسب النوع الحقيقي المصرّح عنه،
+//  حتى لو حدا سمّى ملف خبيث "photo.jpg" أو زوّر النوع، ما رح ينحفظ بامتداد قابل للتنفيذ متل .html أو .svg)
+const SAFE_IMAGE_EXT = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp' };
+
+function safeImageFileFilter(req, file, cb){
+  if (!SAFE_IMAGE_EXT[file.mimetype]) {
+    return cb(new Error('نوع الملف غير مدعوم — الرجاء رفع صورة JPG أو PNG أو GIF أو WEBP فقط'));
+  }
+  cb(null, true);
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + Math.round(Math.random()*1e6) + '-' + file.originalname.replace(/\s+/g,'_'))
+  filename: (req, file, cb) => {
+    const ext = SAFE_IMAGE_EXT[file.mimetype] || '.jpg';
+    cb(null, Date.now() + '-' + Math.round(Math.random()*1e6) + ext);
+  }
 });
 const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024, files: 4 }, // 5MB لكل صورة، حتى 4 صور بكل منشور
-  fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith('image/')) return cb(new Error('يجب أن يكون الملف صورة'));
-    cb(null, true);
-  }
+  fileFilter: safeImageFileFilter
 });
 
 // رفع أكبر مخصص لصورة البانر (صورة واحدة كبيرة، مش أربع صور صغار)
 const bannerUpload = multer({
   storage,
   limits: { fileSize: 12 * 1024 * 1024 }, // 12MB — كافية لصور مصممة عالية الجودة
-  fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith('image/')) return cb(new Error('يجب أن يكون الملف صورة'));
-    cb(null, true);
-  }
+  fileFilter: safeImageFileFilter
 });
 
 // يلتقط أي خطأ من Multer (حجم كبير، نوع ملف غلط...) ويرجعه برسالة JSON واضحة بدل ما يفشل بصمت
