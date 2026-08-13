@@ -306,6 +306,13 @@ function attachImages(post) {
   return { ...post, images: rows.map(r => r.image_path), extraRegions };
 }
 
+// نسخة آمنة للعرض العام — بتشيل رمز الحذف السري (delete_token) قبل الإرجاع،
+// حتى ما يقدر حدا يشوفه ويستخدمه يحذف منشور شخص تاني. لازم يضل معروف بس لصاحب المنشور نفسه.
+function attachImagesPublic(post) {
+  const { delete_token, ...safe } = attachImages(post);
+  return safe;
+}
+
 // توليد رمز حذف عشوائي قصير وسهل الكتابة (6 خانات، أحرف كبيرة وأرقام)
 function generateDeleteToken() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // بدون أحرف/أرقام متشابهة (0/O, 1/I)
@@ -388,7 +395,7 @@ app.post('/api/posts/:id/report', rateLimit(10, 10), checkHoneypot, (req, res) =
 // الفييد العام — بس المنشورات الموافق عليها (approved)
 app.get('/api/posts', (req, res) => {
   const rows = db.prepare(`SELECT * FROM posts WHERE status = 'approved' ORDER BY posted_at DESC`).all();
-  res.json(rows.map(attachImages));
+  res.json(rows.map(attachImagesPublic));
 });
 
 // إعدادات الموقع العامة (اسم، وصف، شريط عاجل، مناطق، مجالات، ألوان، بانر)
