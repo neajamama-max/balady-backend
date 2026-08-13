@@ -13,6 +13,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
@@ -25,8 +26,14 @@ const app = express();
 app.set('trust proxy', 1); // ضروري حتى req.ip يعطي IP الزائر الحقيقي (Render خلف بروكسي)
 const PORT = process.env.PORT || 3000;
 
-// !!! غيّر هاد السر قبل النشر، وحطه بمتغير بيئة (Environment Variable) مش بالكود !!!
-const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_BEFORE_DEPLOY';
+// السر لازم يجي من متغير بيئة (Environment Variable) على Render — مفيش قيمة افتراضية بالكود.
+// لو المتغير مش موجود، منوقف تشغيل السيرفر بالكامل بدل ما نشتغل بسر معروف/ضعيف
+// (سر افتراضي مكتوب بالكود يعني أي حدا شاف الكود يقدر يزوّر توكن أدمن كامل).
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('❌ خطأ فادح: متغير البيئة JWT_SECRET غير موجود. السيرفر لن يعمل بدونه لأسباب أمنية.');
+  process.exit(1);
+}
 
 // ---------- إعداد قاعدة البيانات ----------
 // مجلد تخزين البيانات — لازم يكون مسار "القرص الدائم" (Persistent Disk) بعد ربطه على Render،
@@ -214,7 +221,17 @@ function handleUploadErrors(err, req, res, next) {
   next();
 }
 
-app.use(cors());
+// Helmet: يضيف هيدرات أمان قياسية (CSP، X-Frame-Options، إخفاء X-Powered-By...) على كل الردود.
+// crossOriginResourcePolicy: 'cross-origin' ضروري هون حتى تضل الصور بمجلد /uploads قابلة للعرض
+// من دومين الفرونت (SherlockHost) لأنه مختلف عن دومين الباكند (Render).
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
+
+// CORS مقيّد بدومين الموقع الرسمي بس — مش مفتوح لأي موقع بالعالم
+app.use(cors({
+  origin: ['https://www.balady.co.il', 'https://balady.co.il']
+}));
 app.use(express.json({ limit: '5mb' }));
 app.use('/uploads', express.static(uploadDir));
 
@@ -267,7 +284,8 @@ function checkHoneypot(req, res, next) {
 // مصادقة الإدارة (Auth)
 // ============================================================
 
-app.post('/api/admin/login', (req, res) => {
+// rateLimit(5, 15): حتى 5 محاولات دخول كل 15 دقيقة لكل IP — يمنع محاولات تخمين كلمة السر الآلية (brute force)
+app.post('/api/admin/login', rateLimit(5, 15), (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'الرجاء إدخال اسم المستخدم وكلمة المرور' });
 
