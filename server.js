@@ -342,7 +342,7 @@ function generateDeleteToken() {
 // نشر ستاتوس جديد (بيصير status = pending تلقائياً، وبينستنى موافقة الإدارة)
 app.post('/api/posts', rateLimit(5, 10), upload.array('images', 4), handleUploadErrors, checkHoneypot, (req, res) => {
   const { name, type, content, town, sector, phone, email, extraRegions } = req.body;
-  if (!name || !type || !content || !town || !sector || (!phone && !email)) {
+  if (!name || !type || !content || !sector || (!phone && !email)) {
     return res.status(400).json({ error: 'الرجاء تعبئة كل الحقول المطلوبة (رقم هاتف أو إيميل ع الأقل)' });
   }
 
@@ -448,13 +448,13 @@ app.post('/api/admin/posts/:id/hide', requireAdmin, (req, res) => {
 // تعديل بيانات منشور (قبل أو بعد النشر) من طرف الإدارة — بيعدّل الحقول النصية بس، مش الصور
 app.put('/api/admin/posts/:id', requireAdmin, (req, res) => {
   const { name, type, content, town, sector, phone, email } = req.body;
-  if (!name || !type || !content || !town || !sector || (!phone && !email)) {
+  if (!name || !type || !content || !sector || (!phone && !email)) {
     return res.status(400).json({ error: 'الرجاء تعبئة كل الحقول المطلوبة (رقم هاتف أو إيميل ع الأقل)' });
   }
   const result = db.prepare(`
     UPDATE posts SET name = ?, type = ?, content = ?, town = ?, sector = ?, phone = ?, email = ?
     WHERE id = ?
-  `).run(name, type, content, town, sector, phone || null, email || null, req.params.id);
+  `).run(name, type, content, town || '', sector, phone || null, email || null, req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'المنشور غير موجود' });
   res.json({ message: 'تم حفظ التعديلات' });
 });
